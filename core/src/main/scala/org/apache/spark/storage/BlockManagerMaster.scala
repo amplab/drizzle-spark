@@ -106,6 +106,15 @@ class BlockManagerMaster(
     driverEndpoint.askWithRetry[Option[RpcEndpointRef]](GetExecutorEndpointRef(executorId))
   }
 
+  def getBlockManagerIdForExecutor(executorId: String): BlockManagerId = {
+    driverEndpoint.askWithRetry[Seq[BlockManagerId]](
+      GetBlockManagerIdForExecutor(Array(executorId))).head
+  }
+
+  def getBlockManagerIdForExecutors(executorIds: Array[String]): Seq[BlockManagerId] = {
+    driverEndpoint.askWithRetry[Seq[BlockManagerId]](GetBlockManagerIdForExecutor(executorIds))
+  }
+
   /**
    * Remove a block from the slaves that have it. This can only be used to remove
    * blocks that the driver knows about.
