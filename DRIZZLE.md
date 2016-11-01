@@ -1,6 +1,6 @@
 # Drizzle: Low Latency Execution for Apache Spark
 
-Drizzle is a low latency execution engine for Apache Spark that is targetted
+Drizzle is a low latency execution engine for Apache Spark that is targeted
 towards stream processing and iterative workloads. Currently, Spark uses a BSP
 computation model, and notifies the scheduler at the end of each task. Invoking
 the scheduler at the end of each task adds overheads and results in decreased
