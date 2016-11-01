@@ -32,7 +32,7 @@ object MemoryTestingUtils {
       partitionId = 0,
       taskAttemptId = 0,
       attemptNumber = 0,
-      taskMemoryManager = taskMemoryManager,
+      _taskMemoryManager = taskMemoryManager,
       localProperties = new Properties,
       metricsSystem = env.metricsSystem)
   }

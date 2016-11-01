@@ -34,26 +34,31 @@ import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.rpc.RpcEnv
 import org.apache.spark.scheduler.{FakeTask, Task}
 import org.apache.spark.serializer.JavaSerializer
+import org.apache.spark.storage.BlockManager
 
-class ExecutorSuite extends SparkFunSuite {
+class ExecutorSuite extends SparkFunSuite with LocalSparkContext {
 
   test("SPARK-15963: Catch `TaskKilledException` correctly in Executor.TaskRunner") {
     // mock some objects to make Executor.launchTask() happy
     val conf = new SparkConf
+    sc = new SparkContext("local", "test")
     val serializer = new JavaSerializer(conf)
     val mockEnv = mock(classOf[SparkEnv])
     val mockRpcEnv = mock(classOf[RpcEnv])
     val mockMetricsSystem = mock(classOf[MetricsSystem])
     val mockMemoryManager = mock(classOf[MemoryManager])
+    val mockBlockManager = mock(classOf[BlockManager])
     when(mockEnv.conf).thenReturn(conf)
     when(mockEnv.serializer).thenReturn(serializer)
     when(mockEnv.rpcEnv).thenReturn(mockRpcEnv)
     when(mockEnv.metricsSystem).thenReturn(mockMetricsSystem)
     when(mockEnv.memoryManager).thenReturn(mockMemoryManager)
+    when(mockEnv.blockManager).thenReturn(mockBlockManager)
     when(mockEnv.closureSerializer).thenReturn(serializer)
+    val fakeTaskMetrics = serializer.newInstance().serialize(TaskMetrics.registered).array()
     val serializedTask =
       Task.serializeWithDependencies(
-        new FakeTask(0, 0),
+        new FakeTask(0, 0, Nil, fakeTaskMetrics),
         HashMap[String, Long](),
         HashMap[String, Long](),
         serializer.newInstance())
@@ -85,9 +90,9 @@ class ExecutorSuite extends SparkFunSuite {
         override def answer(invocationOnMock: InvocationOnMock): Unit = {
           if (firstTime) {
             executorSuiteHelper.latch1.countDown()
+            firstTime = false
             // here between latch1 and latch2, executor.killAllTasks() is called
             executorSuiteHelper.latch2.await()
-            firstTime = false
           }
           else {
             // save the returned `taskState` and `testFailedReason` into `executorSuiteHelper`
@@ -104,7 +109,7 @@ class ExecutorSuite extends SparkFunSuite {
 
     var executor: Executor = null
     try {
-      executor = new Executor("id", "localhost", mockEnv, userClassPath = Nil, isLocal = true)
+      executor = new Executor("id", "localhost", mockEnv, 1, userClassPath = Nil, isLocal = true)
       // the task will be launched in a dedicated worker thread
       executor.launchTask(mockExecutorBackend, 0, 0, "", serializedTask)
 

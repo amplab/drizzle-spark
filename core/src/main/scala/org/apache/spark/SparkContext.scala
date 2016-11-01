@@ -1987,6 +1987,42 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
+   * :: DeveloperApi ::
+   * Run a batch of jobs and return results from running all of them
+   */
+  @DeveloperApi
+  def runJobs[T, U: ClassTag](
+      rdds: Seq[RDD[T]],
+      funcs: Seq[Iterator[T] => U]): Seq[Array[U]] = {
+    assertNotStopped()
+    val start = System.nanoTime
+    val callSite = getCallSite
+    assert(rdds.size == funcs.size)
+    val cleanedFuncs = new HashMap[Int, Iterator[T] => U]
+    val resultJobs = (0 until rdds.size).map { i =>
+      if (!cleanedFuncs.contains(funcs(i).hashCode)) {
+        cleanedFuncs.put(funcs(i).hashCode, funcs(i))
+      }
+      val cleanF = cleanedFuncs(funcs(i).hashCode)
+      val results = new Array[U](rdds(i).partitions.length)
+      val jobDescription = JobDescription(
+        rdds(i),
+        (context: TaskContext, iter: Iterator[T]) => cleanF(iter),
+        0 until rdds(i).partitions.length,
+        callSite,
+        (index: Int, res: U) => results(index) = res,
+        localProperties.get)
+      (results, jobDescription)
+    }
+    val batchJobWaiter = dagScheduler.submitManyJobs(resultJobs.map(_._2))
+    batchJobWaiter.awaitResult()
+    logInfo("Batch Job finished: %s, took %f s".format
+      (callSite.shortForm, (System.nanoTime - start) / 1e9))
+    rdds.map(_.doCheckpoint())
+    resultJobs.map(_._1)
+  }
+
+  /**
    * Submit a job for execution and return a FutureJob holding the result.
    */
   def submitJob[T, U, R](
@@ -2074,8 +2110,8 @@ class SparkContext(config: SparkConf) extends Logging {
    *   serializable
    */
   private[spark] def clean[F <: AnyRef](f: F, checkSerializable: Boolean = true): F = {
-    ClosureCleaner.clean(f, checkSerializable)
-    f
+    val g = ClosureCleaner.cleanCheckCache(f, checkSerializable)
+    g.asInstanceOf[F]
   }
 
   /**

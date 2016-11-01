@@ -40,8 +40,10 @@ private[spark] class ShuffleMapStage(
     parents: List[Stage],
     firstJobId: Int,
     callSite: CallSite,
-    val shuffleDep: ShuffleDependency[_, _, _])
-  extends Stage(id, rdd, numTasks, parents, firstJobId, callSite) {
+    val shuffleDep: ShuffleDependency[_, _, _],
+    batchRDDs: Seq[RDD[_]] = Seq.empty,
+    val batchDeps: Seq[ShuffleDependency[_, _, _]] = Seq.empty)
+  extends Stage(id, rdd, numTasks, parents, firstJobId, callSite, batchRDDs) {
 
   private[this] var _mapStageJobs: List[ActiveJob] = Nil
 
@@ -53,6 +55,9 @@ private[spark] class ShuffleMapStage(
    * (a single task might run multiple times).
    */
   private[this] val outputLocs = Array.fill[List[MapStatus]](numPartitions)(Nil)
+
+  private[this] val batchOutputLocs = batchDeps.map(_ =>
+    Array.fill[List[MapStatus]](numPartitions)(Nil))
 
   override def toString: String = "ShuffleMapStage " + id
 
@@ -70,6 +75,10 @@ private[spark] class ShuffleMapStage(
   /** Removes the job from the active job list. */
   def removeActiveJob(job: ActiveJob): Unit = {
     _mapStageJobs = _mapStageJobs.filter(_ != job)
+  }
+
+  def getShuffleIds(): Seq[Int] = {
+    Seq(shuffleDep.shuffleId) ++ batchDeps.map(_.shuffleId)
   }
 
   /**
@@ -93,11 +102,18 @@ private[spark] class ShuffleMapStage(
     missing
   }
 
-  def addOutputLoc(partition: Int, status: MapStatus): Unit = {
+  def addOutputLoc(
+      partition: Int,
+      status: MapStatus,
+      batchStatuses: Seq[MapStatus] = Seq.empty): Unit = {
     val prevList = outputLocs(partition)
     outputLocs(partition) = status :: prevList
     if (prevList == Nil) {
       _numAvailableOutputs += 1
+    }
+    batchStatuses.zipWithIndex.foreach { case (stat, idx) =>
+      val prevList = batchOutputLocs(idx)(partition)
+      batchOutputLocs(idx)(partition) = stat :: prevList
     }
   }
 
@@ -108,7 +124,20 @@ private[spark] class ShuffleMapStage(
     if (prevList != Nil && newList == Nil) {
       _numAvailableOutputs -= 1
     }
+
+    batchOutputLocs.foreach { locs =>
+      val prevList = locs(partition)
+      val newList = prevList.filterNot(_.location == bmAddress)
+      locs(partition) = newList
+    }
   }
+
+  def batchOutputsInMapOutputTrackerFormat(): Seq[Array[MapStatus]] = {
+    batchOutputLocs.map { outputLocs =>
+      outputLocs.map(_.headOption.orNull)
+    }
+  }
+
 
   /**
    * Returns an array of [[MapStatus]] (index by partition id). For each partition, the returned

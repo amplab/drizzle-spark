@@ -117,6 +117,41 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
   }
 
   /**
+   * Adds information about output for a given shuffle.
+   * This method is synchronized because the BlockManager may call it multiple times concurrently
+   * with updates from different map tasks.
+   */
+  def addStatus(
+      shuffleId: Int,
+      mapId: Int,
+      mapStatus: MapStatus): Unit = synchronized {
+    val statuses = {
+      // NOTE: We don't know the number of mapTasks here, so we create an array of size mapId + 1
+      val currentStatuses = mapStatuses.getOrElseUpdate(shuffleId, new Array[MapStatus](mapId + 1))
+
+      if (mapId >= currentStatuses.length) {
+        // Create a bigger array and copy over the statuses.
+        val newSize = mapId + 1
+        val newStatuses = currentStatuses ++ new Array[MapStatus](newSize - currentStatuses.length)
+        mapStatuses.put(shuffleId, newStatuses)
+        newStatuses
+      } else {
+        currentStatuses
+      }
+    }
+    statuses(mapId) = mapStatus
+  }
+
+  def getAvailableMapOutputs(shuffleId: Int): Set[Int] = synchronized {
+    val statuses = mapStatuses.get(shuffleId)
+    if (statuses.isDefined) {
+      statuses.get.zipWithIndex.filter(x => x._1 != null).map(_._2).toSet
+    } else {
+      Set.empty
+    }
+  }
+
+  /**
    * Called from executors to get the server URIs and output sizes for each shuffle block that
    * needs to be read from a given reduce task.
    *
@@ -692,7 +727,7 @@ private[spark] object MapOutputTracker extends Logging {
     val splitsByAddress = new HashMap[BlockManagerId, ArrayBuffer[(BlockId, Long)]]
     for ((status, mapId) <- statuses.zipWithIndex) {
       if (status == null) {
-        val errorMessage = s"Missing an output location for shuffle $shuffleId"
+        val errorMessage = s"Missing an output location for shuffle $shuffleId map $mapId"
         logError(errorMessage)
         throw new MetadataFetchFailedException(shuffleId, startPartition, errorMessage)
       } else {

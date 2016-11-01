@@ -307,6 +307,7 @@ private[spark] class MesosFineGrainedSchedulerBackend(
             val slaveId = taskDesc.executorId
             slavesIdsOfAcceptedOffers += slaveId
             taskIdToSlaveId(taskDesc.taskId) = slaveId
+            taskDesc.prepareSerializedTask()
             val (mesosTask, remainingResources) = createMesosTask(
               taskDesc,
               slaveIdToResources(slaveId),

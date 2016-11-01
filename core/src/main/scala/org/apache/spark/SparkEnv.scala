@@ -34,7 +34,7 @@ import org.apache.spark.memory.{MemoryManager, StaticMemoryManager, UnifiedMemor
 import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.network.netty.NettyBlockTransferService
 import org.apache.spark.rpc.{RpcEndpoint, RpcEndpointRef, RpcEnv}
-import org.apache.spark.scheduler.{LiveListenerBus, OutputCommitCoordinator}
+import org.apache.spark.scheduler.{FutureTaskWaiter, LiveListenerBus, OutputCommitCoordinator}
 import org.apache.spark.scheduler.OutputCommitCoordinator.OutputCommitCoordinatorEndpoint
 import org.apache.spark.serializer.{JavaSerializer, Serializer, SerializerManager}
 import org.apache.spark.shuffle.ShuffleManager
@@ -66,6 +66,7 @@ class SparkEnv (
     val metricsSystem: MetricsSystem,
     val memoryManager: MemoryManager,
     val outputCommitCoordinator: OutputCommitCoordinator,
+    val futureTaskWaiter: FutureTaskWaiter,
     val conf: SparkConf) extends Logging {
 
   private[spark] var isStopped = false
@@ -357,6 +358,8 @@ object SparkEnv extends Logging {
       new OutputCommitCoordinatorEndpoint(rpcEnv, outputCommitCoordinator))
     outputCommitCoordinator.coordinatorRef = Some(outputCommitCoordinatorRef)
 
+    val futureTaskWaiter = new FutureTaskWaiter(conf, blockManager, mapOutputTracker)
+
     val envInstance = new SparkEnv(
       executorId,
       rpcEnv,
@@ -371,6 +374,7 @@ object SparkEnv extends Logging {
       metricsSystem,
       memoryManager,
       outputCommitCoordinator,
+      futureTaskWaiter,
       conf)
 
     // Add a reference to tmp dir created by driver, we will delete this tmp dir when stop() is

@@ -17,27 +17,16 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{IOException, ObjectInputStream, ObjectOutputStream}
+import java.util.Properties
 
 import org.apache.spark.TaskContext
+import org.apache.spark.rdd.RDD
+import org.apache.spark.util.CallSite
 
-/**
- * A Task implementation that fails to serialize.
- */
-private[spark] class NotSerializableFakeTask(myId: Int, stageId: Int)
-  extends Task[Array[Byte]](stageId, 0, 0) {
-
-  override def prepTask(): Unit = {}
-  override def runTask(context: TaskContext): Array[Byte] = Array.empty[Byte]
-  override def preferredLocations: Seq[TaskLocation] = Seq[TaskLocation]()
-
-  @throws(classOf[IOException])
-  private def writeObject(out: ObjectOutputStream): Unit = {
-    if (stageId == 0) {
-      throw new IllegalStateException("Cannot serialize")
-    }
-  }
-
-  @throws(classOf[IOException])
-  private def readObject(in: ObjectInputStream): Unit = {}
-}
+case class JobDescription[T, U](
+    rdd: RDD[T],
+    func: (TaskContext, Iterator[T]) => U,
+    partitions: Seq[Int],
+    callSite: CallSite,
+    resultHandler: (Int, U) => Unit,
+    properties: Properties)

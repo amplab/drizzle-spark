@@ -34,7 +34,7 @@ import org.apache.spark.rpc._
 import org.apache.spark.scheduler.{ExecutorLossReason, TaskDescription}
 import org.apache.spark.scheduler.cluster.CoarseGrainedClusterMessages._
 import org.apache.spark.serializer.SerializerInstance
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.util.{SerializableBuffer, ThreadUtils, Utils}
 
 private[spark] class CoarseGrainedExecutorBackend(
     override val rpcEnv: RpcEnv,
@@ -79,7 +79,7 @@ private[spark] class CoarseGrainedExecutorBackend(
     case RegisteredExecutor =>
       logInfo("Successfully registered with driver")
       try {
-        executor = new Executor(executorId, hostname, env, userClassPath, isLocal = false)
+        executor = new Executor(executorId, hostname, env, cores, userClassPath, isLocal = false)
       } catch {
         case NonFatal(e) =>
           exitExecutor(1, "Unable to create executor due to " + e.getMessage, e)
@@ -97,6 +97,9 @@ private[spark] class CoarseGrainedExecutorBackend(
         executor.launchTask(this, taskId = taskDesc.taskId, attemptNumber = taskDesc.attemptNumber,
           taskDesc.name, taskDesc.serializedTask)
       }
+
+    case LaunchTasks(manyTasksData) =>
+      launchTasks(manyTasksData)
 
     case KillTask(taskId, _, interruptThread) =>
       if (executor == null) {
@@ -141,6 +144,22 @@ private[spark] class CoarseGrainedExecutorBackend(
     driver match {
       case Some(driverRef) => driverRef.send(msg)
       case None => logWarning(s"Drop $msg because has not yet connected to driver")
+    }
+  }
+
+  // Deserialize and launch a batch of tasks.
+  private def launchTasks(allTaskData: Seq[SerializableBuffer]): Unit = {
+    if (executor == null) {
+      logError("Received launch many tasks command but executor was null")
+      System.exit(1)
+    }
+
+    // Deserialize all the tasks and then run them.
+    val taskDescs = allTaskData.map(x => ser.deserialize[TaskDescription](x.value))
+    taskDescs.foreach { taskDesc =>
+      logInfo("Got assigned task " + taskDesc.taskId)
+      executor.launchTask(this, taskId = taskDesc.taskId, attemptNumber = taskDesc.attemptNumber,
+        taskDesc.name, taskDesc.serializedTask)
     }
   }
 

@@ -42,13 +42,14 @@ import org.apache.spark.rdd.RDD
  * @param outputId index of the task in this job (a job can launch tasks on only a subset of the
  *                 input RDD's partitions).
  * @param localProperties copy of thread-local properties set by the user on the driver side.
- * @param metrics a [[TaskMetrics]] that is created at driver side and sent to executor side.
+ * @param serializedTaskMetrics a [[TaskMetrics]] that is created and serialized on the driver and
+ *                              sent to executor side.
  *
  * The parameters below are optional:
  * @param jobId id of the job this task belongs to
  * @param appId id of the app this task belongs to
  * @param appAttemptId attempt id of the app this task belongs to
-  */
+ */
 private[spark] class ResultTask[T, U](
     stageId: Int,
     stageAttemptId: Int,
@@ -57,19 +58,27 @@ private[spark] class ResultTask[T, U](
     locs: Seq[TaskLocation],
     val outputId: Int,
     localProperties: Properties,
-    metrics: TaskMetrics,
+    serializedTaskMetrics: Array[Byte] =
+      SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
+    isFutureTask: Boolean = false,
+    depShuffleIds: Option[Seq[Seq[Int]]] = None,
+    depShuffleNumMaps: Option[Seq[Int]] = None,
     jobId: Option[Int] = None,
     appId: Option[String] = None,
     appAttemptId: Option[String] = None)
-  extends Task[U](stageId, stageAttemptId, partition.index, metrics, localProperties, jobId,
-    appId, appAttemptId)
+  extends Task[U](stageId, stageAttemptId, partition.index,
+    serializedTaskMetrics, localProperties, isFutureTask, depShuffleIds, depShuffleNumMaps,
+    jobId, appId, appAttemptId)
   with Serializable {
+
+  var rdd: RDD[T] = null
+  var func: (TaskContext, Iterator[T]) => U = null
 
   @transient private[this] val preferredLocs: Seq[TaskLocation] = {
     if (locs == null) Nil else locs.toSet.toSeq
   }
 
-  override def runTask(context: TaskContext): U = {
+  override def prepTask(): Unit = {
     // Deserialize the RDD and the func using the broadcast variables.
     val threadMXBean = ManagementFactory.getThreadMXBean
     val deserializeStartTime = System.currentTimeMillis()
@@ -77,13 +86,21 @@ private[spark] class ResultTask[T, U](
       threadMXBean.getCurrentThreadCpuTime
     } else 0L
     val ser = SparkEnv.get.closureSerializer.newInstance()
-    val (rdd, func) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) => U)](
+    val (_rdd, _func) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) => U)](
       ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
+    rdd = _rdd
+    func = _func
     _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
     _executorDeserializeCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
       threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
     } else 0L
+  }
 
+  override def runTask(context: TaskContext): U = {
+    // Deserialize the RDD and the func using the broadcast variables.
+    if (func == null || rdd == null) {
+      prepTask()
+    }
     func(context, rdd.iterator(partition, context))
   }
 
@@ -91,4 +108,25 @@ private[spark] class ResultTask[T, U](
   override def preferredLocations: Seq[TaskLocation] = preferredLocs
 
   override def toString: String = "ResultTask(" + stageId + ", " + partitionId + ")"
+}
+
+object ResultTask {
+
+  def apply[T, U](
+      stageId: Int,
+      stageAttemptId: Int,
+      partition: Partition,
+      outputId: Int,
+      localProperties: Properties,
+      internalAccumulatorsSer: Array[Byte],
+      isFutureTask: Boolean,
+      rdd: RDD[T],
+      func: (TaskContext, Iterator[T]) => U): ResultTask[T, U] = {
+    val rt = new ResultTask[T, U](stageId, stageAttemptId, null, partition, Seq.empty, outputId,
+      localProperties, internalAccumulatorsSer, isFutureTask)
+    rt.rdd = rdd
+    rt.func = func
+    rt
+  }
+
 }

@@ -19,6 +19,13 @@ package org.apache.spark.scheduler
 
 import java.nio.ByteBuffer
 
+import scala.collection.mutable
+import scala.collection.mutable.HashSet
+import scala.util.control.NonFatal
+
+import org.apache.spark._
+import org.apache.spark.internal.Logging
+import org.apache.spark.serializer.SerializerInstance
 import org.apache.spark.util.SerializableBuffer
 
 /**
@@ -31,11 +38,39 @@ private[spark] class TaskDescription(
     val executorId: String,
     val name: String,
     val index: Int,    // Index within this task's TaskSet
-    _serializedTask: ByteBuffer)
-  extends Serializable {
+    val isFutureTask: Boolean,
+    @transient private val _task: Task[_],
+    @transient private val _addedFiles: mutable.Map[String, Long],
+    @transient private val _addedJars: mutable.Map[String, Long],
+    @transient private val _ser: SerializerInstance)
+  extends Serializable with Logging {
 
   // Because ByteBuffers are not serializable, wrap the task in a SerializableBuffer
-  private val buffer = new SerializableBuffer(_serializedTask)
+  private var buffer: SerializableBuffer = _
+
+  def prepareSerializedTask(): Unit = {
+    if (_task != null) {
+      val serializedTask: ByteBuffer = try {
+        Task.serializeWithDependencies(_task, _addedFiles, _addedJars, _ser)
+      } catch {
+        // If the task cannot be serialized, then there is not point in re-attempting
+        // the task as it will always fail. So just abort the task set.
+        case NonFatal(e) =>
+          val msg = s"Failed to serialize the task $taskId, not attempting to retry it."
+          logError(msg, e)
+          // FIXME(shivaram): We dont have a handle to the taskSet here to abort it.
+          throw new TaskNotSerializableException(e)
+      }
+      if (serializedTask.limit > TaskSetManager.TASK_SIZE_TO_WARN_KB * 1024) {
+        logWarning(s"Stage ${_task.stageId} contains a task of very large size " +
+          s"(${serializedTask.limit / 1024} KB). The maximum recommended task size is " +
+          s"${TaskSetManager.TASK_SIZE_TO_WARN_KB} KB.")
+      }
+      buffer = new SerializableBuffer(serializedTask)
+    } else {
+      buffer = new SerializableBuffer(ByteBuffer.allocate(0))
+    }
+  }
 
   def serializedTask: ByteBuffer = buffer.value
 

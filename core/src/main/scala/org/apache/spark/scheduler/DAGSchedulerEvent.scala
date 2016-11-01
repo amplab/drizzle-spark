@@ -41,7 +41,9 @@ private[scheduler] case class JobSubmitted(
     partitions: Array[Int],
     callSite: CallSite,
     listener: JobListener,
-    properties: Properties = null)
+    properties: Properties = null,
+    batchRDDs: Seq[RDD[_]] = Seq.empty,
+    funcs: Seq[(TaskContext, Iterator[_]) => _] = Seq.empty)
   extends DAGSchedulerEvent
 
 /** A map stage as submitted to run as a separate job */

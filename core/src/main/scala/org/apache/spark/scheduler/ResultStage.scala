@@ -34,8 +34,10 @@ private[spark] class ResultStage(
     val partitions: Array[Int],
     parents: List[Stage],
     firstJobId: Int,
-    callSite: CallSite)
-  extends Stage(id, rdd, partitions.length, parents, firstJobId, callSite) {
+    callSite: CallSite,
+    batchRDDs: Seq[RDD[_]] = Seq.empty,
+    val batchFuncs: Seq[(TaskContext, Iterator[_]) => _] = Seq.empty)
+  extends Stage(id, rdd, partitions.length, parents, firstJobId, callSite, batchRDDs) {
 
   /**
    * The active job for this result stage. Will be empty if the job has already finished

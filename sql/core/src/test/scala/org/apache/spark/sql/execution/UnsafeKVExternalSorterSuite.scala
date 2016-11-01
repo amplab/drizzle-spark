@@ -119,7 +119,7 @@ class UnsafeKVExternalSorterSuite extends SparkFunSuite with SharedSQLContext {
       partitionId = 0,
       taskAttemptId = 98456,
       attemptNumber = 0,
-      taskMemoryManager = taskMemMgr,
+      _taskMemoryManager = taskMemMgr,
       localProperties = new Properties,
       metricsSystem = null))
 

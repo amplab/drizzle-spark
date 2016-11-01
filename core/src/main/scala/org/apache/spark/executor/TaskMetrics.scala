@@ -17,8 +17,12 @@
 
 package org.apache.spark.executor
 
+import java.util.LinkedHashMap
+
 import scala.collection.JavaConverters._
-import scala.collection.mutable.{ArrayBuffer, LinkedHashMap}
+import scala.collection.mutable.{ArrayBuffer}
+
+import com.google.common.collect.Maps
 
 import org.apache.spark._
 import org.apache.spark.annotation.DeveloperApi
@@ -125,9 +129,11 @@ class TaskMetrics private[spark] () extends Serializable {
   private[spark] def setExecutorDeserializeCpuTime(v: Long): Unit =
     _executorDeserializeCpuTime.setValue(v)
   private[spark] def setExecutorRunTime(v: Long): Unit = _executorRunTime.setValue(v)
+  private[spark] def incExecutorRunTime(v: Long): Unit = _executorRunTime.add(v)
   private[spark] def setExecutorCpuTime(v: Long): Unit = _executorCpuTime.setValue(v)
   private[spark] def setResultSize(v: Long): Unit = _resultSize.setValue(v)
   private[spark] def setJvmGCTime(v: Long): Unit = _jvmGCTime.setValue(v)
+  private[spark] def incJvmGCTime(v: Long): Unit = _jvmGCTime.add(v)
   private[spark] def setResultSerializationTime(v: Long): Unit =
     _resultSerializationTime.setValue(v)
   private[spark] def incMemoryBytesSpilled(v: Long): Unit = _memoryBytesSpilled.add(v)
@@ -200,32 +206,45 @@ class TaskMetrics private[spark] () extends Serializable {
 
 
   import InternalAccumulator._
-  @transient private[spark] lazy val nameToAccums = LinkedHashMap(
-    EXECUTOR_DESERIALIZE_TIME -> _executorDeserializeTime,
-    EXECUTOR_DESERIALIZE_CPU_TIME -> _executorDeserializeCpuTime,
-    EXECUTOR_RUN_TIME -> _executorRunTime,
-    EXECUTOR_CPU_TIME -> _executorCpuTime,
-    RESULT_SIZE -> _resultSize,
-    JVM_GC_TIME -> _jvmGCTime,
-    RESULT_SERIALIZATION_TIME -> _resultSerializationTime,
-    MEMORY_BYTES_SPILLED -> _memoryBytesSpilled,
-    DISK_BYTES_SPILLED -> _diskBytesSpilled,
-    PEAK_EXECUTION_MEMORY -> _peakExecutionMemory,
-    UPDATED_BLOCK_STATUSES -> _updatedBlockStatuses,
-    shuffleRead.REMOTE_BLOCKS_FETCHED -> shuffleReadMetrics._remoteBlocksFetched,
-    shuffleRead.LOCAL_BLOCKS_FETCHED -> shuffleReadMetrics._localBlocksFetched,
-    shuffleRead.REMOTE_BYTES_READ -> shuffleReadMetrics._remoteBytesRead,
-    shuffleRead.LOCAL_BYTES_READ -> shuffleReadMetrics._localBytesRead,
-    shuffleRead.FETCH_WAIT_TIME -> shuffleReadMetrics._fetchWaitTime,
-    shuffleRead.RECORDS_READ -> shuffleReadMetrics._recordsRead,
-    shuffleWrite.BYTES_WRITTEN -> shuffleWriteMetrics._bytesWritten,
-    shuffleWrite.RECORDS_WRITTEN -> shuffleWriteMetrics._recordsWritten,
-    shuffleWrite.WRITE_TIME -> shuffleWriteMetrics._writeTime,
-    input.BYTES_READ -> inputMetrics._bytesRead,
-    input.RECORDS_READ -> inputMetrics._recordsRead,
-    output.BYTES_WRITTEN -> outputMetrics._bytesWritten,
-    output.RECORDS_WRITTEN -> outputMetrics._recordsWritten
-  ) ++ testAccum.map(TEST_ACCUM -> _)
+  @transient private[spark] lazy val nameToAccums = {
+    val mapEntries = Array[(String, AccumulatorV2[_, _])](
+      EXECUTOR_DESERIALIZE_TIME -> _executorDeserializeTime,
+      EXECUTOR_DESERIALIZE_CPU_TIME -> _executorDeserializeCpuTime,
+      EXECUTOR_RUN_TIME -> _executorRunTime,
+      EXECUTOR_CPU_TIME -> _executorCpuTime,
+      RESULT_SIZE -> _resultSize,
+      JVM_GC_TIME -> _jvmGCTime,
+      RESULT_SERIALIZATION_TIME -> _resultSerializationTime,
+      MEMORY_BYTES_SPILLED -> _memoryBytesSpilled,
+      DISK_BYTES_SPILLED -> _diskBytesSpilled,
+      PEAK_EXECUTION_MEMORY -> _peakExecutionMemory,
+      UPDATED_BLOCK_STATUSES -> _updatedBlockStatuses,
+      shuffleRead.REMOTE_BLOCKS_FETCHED -> shuffleReadMetrics._remoteBlocksFetched,
+      shuffleRead.LOCAL_BLOCKS_FETCHED -> shuffleReadMetrics._localBlocksFetched,
+      shuffleRead.REMOTE_BYTES_READ -> shuffleReadMetrics._remoteBytesRead,
+      shuffleRead.LOCAL_BYTES_READ -> shuffleReadMetrics._localBytesRead,
+      shuffleRead.FETCH_WAIT_TIME -> shuffleReadMetrics._fetchWaitTime,
+      shuffleRead.RECORDS_READ -> shuffleReadMetrics._recordsRead,
+      shuffleWrite.BYTES_WRITTEN -> shuffleWriteMetrics._bytesWritten,
+      shuffleWrite.RECORDS_WRITTEN -> shuffleWriteMetrics._recordsWritten,
+      shuffleWrite.WRITE_TIME -> shuffleWriteMetrics._writeTime,
+      input.BYTES_READ -> inputMetrics._bytesRead,
+      input.RECORDS_READ -> inputMetrics._recordsRead,
+      output.BYTES_WRITTEN -> outputMetrics._bytesWritten,
+      output.RECORDS_WRITTEN -> outputMetrics._recordsWritten
+    )
+    val map = new LinkedHashMap[String, AccumulatorV2[_, _]](mapEntries.length)
+    var i = 0
+    while (i < mapEntries.length) {
+      val e = mapEntries(i)
+      map.put(e._1, e._2)
+      i += 1
+    }
+    testAccum.foreach { accum =>
+      map.put(TEST_ACCUM, accum)
+    }
+    map.asScala
+  }
 
   @transient private[spark] lazy val internalAccums: Seq[AccumulatorV2[_, _]] =
     nameToAccums.values.toIndexedSeq
@@ -308,16 +327,16 @@ private[spark] object TaskMetrics extends Logging {
    */
   def fromAccumulators(accums: Seq[AccumulatorV2[_, _]]): TaskMetrics = {
     val tm = new TaskMetrics
-    val (internalAccums, externalAccums) =
-      accums.partition(a => a.name.isDefined && tm.nameToAccums.contains(a.name.get))
-
-    internalAccums.foreach { acc =>
-      val tmAcc = tm.nameToAccums(acc.name.get).asInstanceOf[AccumulatorV2[Any, Any]]
-      tmAcc.metadata = acc.metadata
-      tmAcc.merge(acc.asInstanceOf[AccumulatorV2[Any, Any]])
+    accums.foreach { acc =>
+      val isInternal = acc.name.isDefined && tm.nameToAccums.contains(acc.name.get)
+      if (isInternal) {
+        val tmAcc = tm.nameToAccums(acc.name.get).asInstanceOf[AccumulatorV2[Any, Any]]
+        tmAcc.metadata = acc.metadata
+        tmAcc.merge(acc.asInstanceOf[AccumulatorV2[Any, Any]])
+      } else {
+        tm.externalAccums += acc
+      }
     }
-
-    tm.externalAccums ++= externalAccums
     tm
   }
 }

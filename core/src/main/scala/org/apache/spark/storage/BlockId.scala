@@ -32,7 +32,7 @@ import org.apache.spark.annotation.DeveloperApi
 @DeveloperApi
 sealed abstract class BlockId {
   /** A globally unique identifier for this Block. Can be used for ser/de. */
-  def name: String
+  val name: String
 
   // convenience methods
   def asRDDId: Option[RDDBlockId] = if (isRDD) Some(asInstanceOf[RDDBlockId]) else None
@@ -50,54 +50,54 @@ sealed abstract class BlockId {
 
 @DeveloperApi
 case class RDDBlockId(rddId: Int, splitIndex: Int) extends BlockId {
-  override def name: String = "rdd_" + rddId + "_" + splitIndex
+  override val name: String = "rdd_" + rddId + "_" + splitIndex
 }
 
 // Format of the shuffle block ids (including data and index) should be kept in sync with
 // org.apache.spark.network.shuffle.ExternalShuffleBlockResolver#getBlockData().
 @DeveloperApi
 case class ShuffleBlockId(shuffleId: Int, mapId: Int, reduceId: Int) extends BlockId {
-  override def name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId
+  override val name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId
 }
 
 @DeveloperApi
 case class ShuffleDataBlockId(shuffleId: Int, mapId: Int, reduceId: Int) extends BlockId {
-  override def name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId + ".data"
+  override val name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId + ".data"
 }
 
 @DeveloperApi
 case class ShuffleIndexBlockId(shuffleId: Int, mapId: Int, reduceId: Int) extends BlockId {
-  override def name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId + ".index"
+  override val name: String = "shuffle_" + shuffleId + "_" + mapId + "_" + reduceId + ".index"
 }
 
 @DeveloperApi
 case class BroadcastBlockId(broadcastId: Long, field: String = "") extends BlockId {
-  override def name: String = "broadcast_" + broadcastId + (if (field == "") "" else "_" + field)
+  override val name: String = "broadcast_" + broadcastId + (if (field == "") "" else "_" + field)
 }
 
 @DeveloperApi
 case class TaskResultBlockId(taskId: Long) extends BlockId {
-  override def name: String = "taskresult_" + taskId
+  override val name: String = "taskresult_" + taskId
 }
 
 @DeveloperApi
 case class StreamBlockId(streamId: Int, uniqueId: Long) extends BlockId {
-  override def name: String = "input-" + streamId + "-" + uniqueId
+  override val name: String = "input-" + streamId + "-" + uniqueId
 }
 
 /** Id associated with temporary local data managed as blocks. Not serializable. */
 private[spark] case class TempLocalBlockId(id: UUID) extends BlockId {
-  override def name: String = "temp_local_" + id
+  override val name: String = "temp_local_" + id
 }
 
 /** Id associated with temporary shuffle data managed as blocks. Not serializable. */
 private[spark] case class TempShuffleBlockId(id: UUID) extends BlockId {
-  override def name: String = "temp_shuffle_" + id
+  override val name: String = "temp_shuffle_" + id
 }
 
 // Intended only for testing purposes
 private[spark] case class TestBlockId(id: String) extends BlockId {
-  override def name: String = "test_" + id
+  override val name: String = "test_" + id
 }
 
 @DeveloperApi

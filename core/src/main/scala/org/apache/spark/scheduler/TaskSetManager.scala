@@ -174,8 +174,6 @@ private[spark] class TaskSetManager(
 
   override def schedulingMode: SchedulingMode = SchedulingMode.NONE
 
-  var emittedTaskSizeWarning = false
-
   /** Add a task to all the pending-task lists that it should be on. */
   private def addPendingTask(index: Int) {
     for (loc <- tasks(index).preferredLocations) {
@@ -448,24 +446,6 @@ private[spark] class TaskSetManager(
         }
         // Serialize and return the task
         val startTime = clock.getTimeMillis()
-        val serializedTask: ByteBuffer = try {
-          Task.serializeWithDependencies(task, sched.sc.addedFiles, sched.sc.addedJars, ser)
-        } catch {
-          // If the task cannot be serialized, then there's no point to re-attempt the task,
-          // as it will always fail. So just abort the whole task-set.
-          case NonFatal(e) =>
-            val msg = s"Failed to serialize task $taskId, not attempting to retry it."
-            logError(msg, e)
-            abort(s"$msg Exception during serialization: $e")
-            throw new TaskNotSerializableException(e)
-        }
-        if (serializedTask.limit > TaskSetManager.TASK_SIZE_TO_WARN_KB * 1024 &&
-          !emittedTaskSizeWarning) {
-          emittedTaskSizeWarning = true
-          logWarning(s"Stage ${task.stageId} contains a task of very large size " +
-            s"(${serializedTask.limit / 1024} KB). The maximum recommended task size is " +
-            s"${TaskSetManager.TASK_SIZE_TO_WARN_KB} KB.")
-        }
         addRunningTask(taskId)
 
         // We used to log the time it takes to serialize the task, but task size is already
@@ -473,11 +453,11 @@ private[spark] class TaskSetManager(
         // val timeTaken = clock.getTime() - startTime
         val taskName = s"task ${info.id} in stage ${taskSet.id}"
         logInfo(s"Starting $taskName (TID $taskId, $host, executor ${info.executorId}, " +
-          s"partition ${task.partitionId}, $taskLocality, ${serializedTask.limit} bytes)")
+          s"partition ${task.partitionId}, $taskLocality)")
 
         sched.dagScheduler.taskStarted(task, info)
         new TaskDescription(taskId = taskId, attemptNumber = attemptNum, execId,
-          taskName, index, serializedTask)
+          taskName, index, task.isFutureTask, task, sched.sc.addedFiles, sched.sc.addedJars, ser)
       }
     } else {
       None
@@ -779,6 +759,17 @@ private[spark] class TaskSetManager(
         None
     }
 
+    // Mark futures tasks as zombie and ask DAGScheduler to retry them
+    // once their parent stage finishes
+    if (taskSet.isFutureTask) {
+      if (!successful(index)) {
+        successful(index) = true
+        tasksSuccessful += 1
+      }
+      // Not adding to failed executors for FetchFailed.
+      isZombie = true
+    }
+
     sched.dagScheduler.taskEnded(tasks(index), reason, null, accumUpdates, info)
 
     if (successful(index)) {
@@ -850,7 +841,8 @@ private[spark] class TaskSetManager(
     // and we are not using an external shuffle server which could serve the shuffle outputs.
     // The reason is the next stage wouldn't be able to fetch the data from this dead executor
     // so we would need to rerun these tasks on other executors.
-    if (tasks(0).isInstanceOf[ShuffleMapTask] && !env.blockManager.externalShuffleServiceEnabled) {
+    if ( (tasks(0).isInstanceOf[ShuffleMapTask] || tasks(0).isInstanceOf[BatchShuffleMapTask]) &&
+         !env.blockManager.externalShuffleServiceEnabled) {
       for ((tid, info) <- taskInfos if info.executorId == execId) {
         val index = taskInfos(tid).index
         if (successful(index)) {

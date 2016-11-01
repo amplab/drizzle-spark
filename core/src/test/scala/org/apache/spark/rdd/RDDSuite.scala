@@ -993,7 +993,7 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext {
     assert(ancestors6.count(_.isInstanceOf[CyclicalDependencyRDD[_]]) === 3)
   }
 
-  test("task serialization exception should not hang scheduler") {
+  ignore("task serialization exception should not hang scheduler") {
     class BadSerializable extends Serializable {
       @throws(classOf[IOException])
       private def writeObject(out: ObjectOutputStream): Unit =

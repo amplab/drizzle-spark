@@ -17,6 +17,7 @@
 
 package org.apache.spark.util
 
+import java.util.ArrayList
 import java.util.concurrent.{BlockingQueue, LinkedBlockingDeque}
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -35,7 +36,22 @@ private[spark] abstract class EventLoop[E](name: String) extends Logging {
 
   private val eventQueue: BlockingQueue[E] = new LinkedBlockingDeque[E]()
 
+  private val eventsToHandle = new ArrayList[E]()
+
   private val stopped = new AtomicBoolean(false)
+
+  private def handleEvent(event: E): Unit = {
+    try {
+      onReceive(event)
+    } catch {
+      case NonFatal(e) =>
+        try {
+          onError(e)
+        } catch {
+          case NonFatal(e) => logError("Unexpected error in " + name, e)
+        }
+    }
+  }
 
   private val eventThread = new Thread(name) {
     setDaemon(true)
@@ -43,16 +59,17 @@ private[spark] abstract class EventLoop[E](name: String) extends Logging {
     override def run(): Unit = {
       try {
         while (!stopped.get) {
-          val event = eventQueue.take()
-          try {
-            onReceive(event)
-          } catch {
-            case NonFatal(e) =>
-              try {
-                onError(e)
-              } catch {
-                case NonFatal(e) => logError("Unexpected error in " + name, e)
-              }
+          eventsToHandle.clear()
+          // drainTo is non-blocking but is useful for handling cases where
+          // the number of events are large. So we call take first (which is blocking)
+          // and use drainTo after that to get any other events already in the queue.
+          val firstEvent = eventQueue.take()
+          eventQueue.drainTo(eventsToHandle)
+          handleEvent(firstEvent)
+          var i = 0
+          while (i < eventsToHandle.size()) {
+            handleEvent(eventsToHandle.get(i))
+            i = i + 1
           }
         }
       } catch {

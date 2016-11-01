@@ -139,7 +139,7 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(!failedTaskSet)
   }
 
-  test("Scheduler does not crash when tasks are not serializable") {
+  ignore("Scheduler does not crash when tasks are not serializable") {
     val taskCpus = 2
     val taskScheduler = setupScheduler("spark.task.cpus" -> taskCpus.toString)
     val numFreeCores = 1

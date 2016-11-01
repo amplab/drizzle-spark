@@ -19,7 +19,7 @@ package org.apache.spark.util
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
 
-import scala.collection.mutable.{Map, Set, Stack}
+import scala.collection.mutable.{HashMap, Map, Set, Stack}
 import scala.language.existentials
 
 import org.apache.xbean.asm5.{ClassReader, ClassVisitor, MethodVisitor, Type}
@@ -32,6 +32,8 @@ import org.apache.spark.internal.Logging
  * A cleaner that renders closures serializable if they can be done so safely.
  */
 private[spark] object ClosureCleaner extends Logging {
+
+  val cleanedFuncsCache = new HashMap[Int, Any]
 
   // Get an ASM class reader for a given class from the JAR that loaded it
   private[util] def getClassReader(cls: Class[_]): ClassReader = {
@@ -106,6 +108,18 @@ private[spark] object ClosureCleaner extends Logging {
       checkSerializable: Boolean = true,
       cleanTransitively: Boolean = true): Unit = {
     clean(closure, checkSerializable, cleanTransitively, Map.empty)
+  }
+
+  def cleanCheckCache(
+      closure: AnyRef,
+      checkSerializable: Boolean = true,
+      cleanTransitively: Boolean = true): AnyRef = {
+    if (cleanedFuncsCache.contains(closure.hashCode)) {
+      cleanedFuncsCache.get(closure.hashCode)
+    } else {
+      clean(closure, checkSerializable, cleanTransitively, Map.empty)
+      closure
+    }
   }
 
   /**

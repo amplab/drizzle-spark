@@ -33,11 +33,12 @@ private[spark] class TaskContextImpl(
     val partitionId: Int,
     override val taskAttemptId: Long,
     override val attemptNumber: Int,
-    override val taskMemoryManager: TaskMemoryManager,
+    var _taskMemoryManager: TaskMemoryManager,
     localProperties: Properties,
     @transient private val metricsSystem: MetricsSystem,
     // The default value is only used in tests.
-    override val taskMetrics: TaskMetrics = TaskMetrics.empty)
+    override val taskMetrics: TaskMetrics = TaskMetrics.empty,
+    var batchId: Int = 0)
   extends TaskContext
   with Logging {
 
@@ -65,6 +66,8 @@ private[spark] class TaskContextImpl(
     onFailureCallbacks += listener
     this
   }
+
+  override def taskMemoryManager(): TaskMemoryManager = _taskMemoryManager
 
   /** Marks the task as failed and triggers the failure listeners. */
   private[spark] def markTaskFailed(error: Throwable): Unit = {

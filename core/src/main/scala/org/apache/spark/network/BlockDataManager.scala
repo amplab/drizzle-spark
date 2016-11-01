@@ -20,6 +20,7 @@ package org.apache.spark.network
 import scala.reflect.ClassTag
 
 import org.apache.spark.network.buffer.ManagedBuffer
+import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.storage.{BlockId, StorageLevel}
 
 private[spark]
@@ -42,6 +43,11 @@ trait BlockDataManager {
       data: ManagedBuffer,
       level: StorageLevel,
       classTag: ClassTag[_]): Boolean
+
+  /**
+   * Acknowledges that the given map output is now ready.
+   */
+  def mapOutputReady(shuffleId: Int, mapId: Int, numReduces: Int, mapStatus: MapStatus): Unit
 
   /**
    * Release locks acquired by [[putBlockData()]] and [[getBlockData()]].

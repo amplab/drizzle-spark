@@ -152,9 +152,11 @@ private[storage] class BlockInfoManager extends Logging {
    * This must be called prior to calling any other BlockInfoManager methods from that task.
    */
   def registerTask(taskAttemptId: TaskAttemptId): Unit = synchronized {
-    require(!readLocksByTask.contains(taskAttemptId),
-      s"Task attempt $taskAttemptId is already registered")
-    readLocksByTask(taskAttemptId) = ConcurrentHashMultiset.create()
+    if (readLocksByTask.contains(taskAttemptId)) {
+      logInfo(s"Task attempt $taskAttemptId is already registered")
+    } else {
+      readLocksByTask(taskAttemptId) = ConcurrentHashMultiset.create()
+    }
   }
 
   /**
@@ -340,10 +342,18 @@ private[storage] class BlockInfoManager extends Logging {
     val blocksWithReleasedLocks = mutable.ArrayBuffer[BlockId]()
 
     val readLocks = synchronized {
-      readLocksByTask.remove(taskAttemptId).get
+      if (readLocksByTask.contains(taskAttemptId)) {
+        Some(readLocksByTask.remove(taskAttemptId).get)
+      } else {
+        None
+      }
     }
     val writeLocks = synchronized {
-      writeLocksByTask.remove(taskAttemptId).getOrElse(Seq.empty)
+      if (writeLocksByTask.contains(taskAttemptId)) {
+        writeLocksByTask.remove(taskAttemptId).getOrElse(Seq.empty)
+      } else {
+        Seq.empty
+      }
     }
 
     for (blockId <- writeLocks) {
@@ -353,14 +363,16 @@ private[storage] class BlockInfoManager extends Logging {
       }
       blocksWithReleasedLocks += blockId
     }
-    readLocks.entrySet().iterator().asScala.foreach { entry =>
-      val blockId = entry.getElement
-      val lockCount = entry.getCount
-      blocksWithReleasedLocks += blockId
-      synchronized {
-        get(blockId).foreach { info =>
-          info.readerCount -= lockCount
-          assert(info.readerCount >= 0)
+    if (readLocks.isDefined) {
+      readLocks.get.entrySet().iterator().asScala.foreach { entry =>
+        val blockId = entry.getElement
+        val lockCount = entry.getCount
+        blocksWithReleasedLocks += blockId
+        synchronized {
+          get(blockId).foreach { info =>
+            info.readerCount -= lockCount
+            assert(info.readerCount >= 0)
+          }
         }
       }
     }

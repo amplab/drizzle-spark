@@ -146,6 +146,11 @@ abstract class TaskContext extends Serializable {
   def stageId(): Int
 
   /**
+   * For a batch task this is the id of the batch that this task belongs to
+   */
+  def batchId(): Int
+
+  /**
    * The ID of the RDD partition that is computed by this task.
    */
   def partitionId(): Int
