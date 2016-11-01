@@ -95,7 +95,7 @@ object DrizzleRunningSum {
       }
       val end = System.nanoTime
       println("Drizzle: Running " + numIters + " iters " + batchSize + " batchSize took " +
-        (end-begin)/1e6 + " ms. Creating took " + (begin-startIter)/1e6 + " ms")
+        (end-begin)/1e6 + " ms")
     }
 
     sc.stop()
