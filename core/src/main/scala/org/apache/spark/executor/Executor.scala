@@ -95,6 +95,8 @@ private[spark] class Executor(
 
   // Whether to load classes in user jars before those in Spark jars
   private val userClassPathFirst = conf.getBoolean("spark.executor.userClassPathFirst", false)
+  private val barrierAcrossBatches =
+    conf.getBoolean("spark.executor.drizzle.barrierAcrossBatches", false)
 
   // Create our ClassLoader
   // do this after SparkEnv creation so can access the SecurityManager
@@ -155,6 +157,9 @@ private[spark] class Executor(
   // is always <= cores provided in the constructor.
   private var currentActiveTasks = 0
 
+  private val currentlyRunningTasks = new HashMap[Long, (Int, Int, Boolean)]
+  private val currentlyPendingFutureTasks = new HashMap[Long, (Int, Int, Boolean)]
+
   /**
    * When an executor is unable to send heartbeats to the driver more than `HEARTBEAT_MAX_FAILURES`
    * times, it should kill itself. The default value is 60. It means we will retry to send
@@ -179,16 +184,44 @@ private[spark] class Executor(
     scheduleTasks()
   }
 
+  private def higherPriorityStagesRunning(t: PendingTask): Boolean = {
+    var higherPriorityStageExists = false
+    // Right now this just checks if all tasks running are from current or future batch.
+    // i.e. we will not allow running batch
+    currentlyRunningTasks.foreach { case kv =>
+      if (t.priority._2 > kv._2._2) {
+        higherPriorityStageExists = true
+      }
+    }
+    currentlyPendingFutureTasks.foreach { case kv =>
+      if (t.priority._2 > kv._2._2) {
+        higherPriorityStageExists = true
+      }
+    }
+    higherPriorityStageExists
+  }
+
   // If there are slots free in the threadPool, this method picks the highest priority
   // task and executes it.
   private def scheduleTasks(): Unit = {
     taskSchedule.synchronized {
-      while ((cores == 0 || currentActiveTasks < cores) && !taskSchedule.isEmpty()) {
+      var noRunnableTasks = false
+      while ((cores == 0 || currentActiveTasks < cores) && !taskSchedule.isEmpty() &&
+             !noRunnableTasks) {
         val t = taskSchedule.poll()
-        currentActiveTasks += 1
-        logInfo(
-          s"Task ${t.tr.taskId} took ${(System.nanoTime - t.scheduleTimeNanos)/1e6} ms in queue")
-        threadPool.execute(t.tr)
+        if (barrierAcrossBatches && higherPriorityStagesRunning(t)) {
+          taskSchedule.add(t)
+          noRunnableTasks = true
+          logInfo(s"Skipping task ${t.tr.taskId}, b ${t.priority._2} as higher priority running")
+        } else {
+          currentActiveTasks += 1
+          currentlyRunningTasks.put(t.tr.taskId, t.priority)
+          currentlyPendingFutureTasks.remove(t.tr.taskId)
+          logInfo(
+            s"Task ${t.tr.taskId}, b ${t.priority._2} took " +
+            s"${(System.nanoTime - t.scheduleTimeNanos)/1e6} ms in queue")
+          threadPool.execute(t.tr)
+        }
       }
     }
   }
@@ -196,6 +229,7 @@ private[spark] class Executor(
   def notifyTaskEnd(taskId: Long): Unit = {
     taskSchedule.synchronized {
       currentActiveTasks -= 1
+      currentlyRunningTasks.remove(taskId)
     }
     scheduleTasks()
   }
@@ -469,7 +503,8 @@ private[spark] class Executor(
         batchId = lastExecutedBatch)
       threwException = false
       val taskFinish = System.currentTimeMillis()
-      logInfo(s"Finished running $taskName (TID $taskId) took ${taskFinish-taskStart}")
+      logInfo(s"Finished running $taskName (TID $taskId, batch $lastExecutedBatch) took " +
+              s"${taskFinish-taskStart}")
 
       // If the task has been killed, let's fail it.
       if (task.killed) {
@@ -576,6 +611,7 @@ private[spark] class Executor(
 
         val shuffleDepId = depShuffles.head
         val shuffleNumMaps = depNumMaps.head
+        currentlyPendingFutureTasks.put(taskId, (ft.stageId, batchId, true))
         env.futureTaskWaiter.submitFutureTask(FutureTaskInfo(
           shuffleDepId,
           shuffleNumMaps,
