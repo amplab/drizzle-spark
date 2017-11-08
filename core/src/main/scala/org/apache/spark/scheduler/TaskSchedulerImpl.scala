@@ -309,7 +309,10 @@ private[spark] class TaskSchedulerImpl(
     }
 
     // Randomly shuffle offers to avoid always placing tasks on the same set of workers.
-    val shuffledOffers = Random.shuffle(offers)
+    // val shuffledOffers = Random.shuffle(offers)
+    // NOTE(shivaram): Don't shuffle offers as this hurts low latency queries were tasks on
+    // same workers leads to better performance.
+    val shuffledOffers = offers
     // Build a list of tasks to assign to each worker.
     val tasks = shuffledOffers.map(o => new ArrayBuffer[TaskDescription](o.cores))
     val availableCpus = shuffledOffers.map(o => o.cores).toArray

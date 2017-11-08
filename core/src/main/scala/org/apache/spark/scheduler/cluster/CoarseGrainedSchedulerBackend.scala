@@ -138,6 +138,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
               } else {
                 executorInfo.freeCores += scheduler.CPUS_PER_TASK
               }
+              executorInfo.numTasksFinished += 1
               makeOffers(executorId)
             case None =>
               // Ignoring the update since we don't know about the executor.
@@ -178,7 +179,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           totalCoreCount.addAndGet(cores)
           totalRegisteredExecutors.addAndGet(1)
           val data = new ExecutorData(executorRef, executorRef.address, hostname,
-            cores, cores, logUrls)
+            cores, 0L, cores, logUrls)
           // This must be synchronized because variables mutated
           // in this block are read when requesting executors
           CoarseGrainedSchedulerBackend.this.synchronized {
@@ -225,7 +226,9 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     // Make fake resource offers on all executors
     private def makeOffers() {
       // Filter out executors under killing
-      val activeExecutors = executorDataMap.filterKeys(executorIsAlive)
+      // val activeExecutors = executorDataMap.filterKeys(executorIsAlive)
+      val activeExecutors = executorDataMap.filterKeys(executorIsAlive).toSeq.sortBy(
+        x => -1 * x._2.numTasksFinished)
       val workOffers = activeExecutors.map { case (id, executorData) =>
         new WorkerOffer(id, executorData.executorHost, executorData.freeCores)
       }.toIndexedSeq
