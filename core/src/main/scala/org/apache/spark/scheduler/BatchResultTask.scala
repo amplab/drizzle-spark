@@ -74,8 +74,10 @@ private[spark] class BatchResultTask[T, U: ClassTag](
     }
 
     (0 until partitions.length).map { i =>
-      ResultTask(stageId, stageAttemptId, partitions(i), outputId, localProperties,
+      val r = ResultTask(stageId, stageAttemptId, partitions(i), outputId, localProperties,
         internalAccumulatorsSer, isFutureTask, rdds(i), funcs(i))
+      r.epoch = epoch
+      r
     }.map(_.asInstanceOf[Task[Any]])
   }
 

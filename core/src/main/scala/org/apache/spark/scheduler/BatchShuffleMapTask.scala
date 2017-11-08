@@ -73,8 +73,10 @@ private[spark] class BatchShuffleMapTask(
     }
 
     (0 until partitions.length).map { i =>
-      ShuffleMapTask(stageId, stageAttemptId, partitions(i), localProperties,
+      val s = ShuffleMapTask(stageId, stageAttemptId, partitions(i), localProperties,
         internalAccumulatorsSer, isFutureTask, rdds(i), deps(i), nextStageLocs)
+      s.epoch = epoch
+      s
     }.map(_.asInstanceOf[Task[Any]])
   }
 
