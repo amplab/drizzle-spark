@@ -94,9 +94,9 @@ private[spark] class Executor(
   }
 
   // Whether to load classes in user jars before those in Spark jars
-  private val userClassPathFirst = conf.getBoolean("spark.executor.userClassPathFirst", true)
+  private val userClassPathFirst = conf.getBoolean("spark.executor.userClassPathFirst", false)
   private val barrierAcrossBatches =
-    conf.getBoolean("spark.executor.drizzle.barrierAcrossBatches", false)
+    conf.getBoolean("spark.executor.drizzle.barrierAcrossBatches", true)
 
   // Create our ClassLoader
   // do this after SparkEnv creation so can access the SecurityManager
